@@ -9,6 +9,7 @@ from streamlit_folium import st_folium
 from datetime import datetime
 import calendar
 import emoji
+import numpy as np
 
 # Initialiser l'état des résultats
 st.session_state.setdefault('trajet', None)
@@ -23,16 +24,18 @@ class OverpassAPI:
         query = f"""
         [out:json];
         (
-            node["amenity"="museum"](around:1000, {self.latitude}, {self.longitude});
-            way["amenity"="museum"](around:1000, {self.latitude}, {self.longitude});
-            relation["amenity"="museum"](around:1000, {self.latitude}, {self.longitude});
-            node["amenity"="theatre"](around:1000, {self.latitude}, {self.longitude});
-            node["tourism"="art_gallery"](around:1000, {self.latitude}, {self.longitude});
-            way["tourism"="art_gallery"](around:1000, {self.latitude}, {self.longitude});
-            relation["tourism"="art_gallery"](around:1000, {self.latitude}, {self.longitude});
-            node["historic"="castle"](around:1000, {self.latitude}, {self.longitude});
-            way["historic"="castle"](around:1000, {self.latitude}, {self.longitude});
-            relation["historic"="castle"](around:1000, {self.latitude}, {self.longitude});
+        node["tourism"="museum"](around:3000, {self.latitude}, {self.longitude});
+        way["tourism"="museum"](around:3000, {self.latitude}, {self.longitude});
+        relation["tourism"="museum"](around:3000, {self.latitude}, {self.longitude});
+        node["tourism"="art_gallery"](around:3000, {self.latitude}, {self.longitude});
+        way["tourism"="art_gallery"](around:3000, {self.latitude}, {self.longitude});
+        relation["tourism"="art_gallery"](around:3000, {self.latitude}, {self.longitude});
+        node["amenity"="theatre"](around:3000, {self.latitude}, {self.longitude});
+        way["amenity"="theatre"](around:3000, {self.latitude}, {self.longitude});
+        relation["amenity"="theatre"](around:3000, {self.latitude}, {self.longitude});
+        node["historic"="castle"](around:3000, {self.latitude}, {self.longitude});
+        way["historic"="castle"](around:3000, {self.latitude}, {self.longitude});
+        relation["historic"="castle"](around:3000, {self.latitude}, {self.longitude});
         );
         out body;
         >;
@@ -100,6 +103,8 @@ class GTFSData:
             else:
                 st.error(f"Erreur lors du téléchargement de {resource['title']}")
 
+        st.session_state.chargement_termine = True
+
     def process_gtfs_files(self, title):
         try:
             trips_df = pd.read_csv(f"./gtfs/{title}/trips.txt")
@@ -109,6 +114,7 @@ class GTFSData:
             self.gtfs_data[title] = (trips_df, stop_times_df, stops_df, routes_df)
         except Exception as e:
             st.error(f"Erreur lors de la lecture des fichiers GTFS pour {title}: {e}")
+        
 
     def get_trip_data(self, gare_choisie, mode_choisi):
         trajets_possibles = []
@@ -177,9 +183,9 @@ resources_urls = [
         "format": "gtfs"
     },
     {
-        "title": "Eurostar",
-        "url": "https://www.data.gouv.fr/fr/datasets/r/9089b550-696e-4ae0-87b5-40ea55a14292",
-        "format": "gtfs"
+        "title":"Trenitalia",
+        "url":"https://www.data.gouv.fr/fr/datasets/r/bdecea2c-ebc9-4f22-812d-927e4a2e4bad",
+        "format":"gtfs"
     }
 ]
 
@@ -187,35 +193,57 @@ gtfs_handler = GTFSData(resources_urls)
 gtfs_handler.download_and_process_resources()
 
 def main():
-    # Interface Streamlit
     st.title('On va où ?')
+    
+    station_name_mapping = {
+        "Paris Gare de Lyon": "Paris-Gare-De-Lyon"
+    }
 
-    # Charger la liste des gares au démarrage
+    paris_stations = [
+        "Paris Gare du Nord", 
+        "Paris Gare de l'Est", 
+        "Paris Gare de Lyon", 
+        "Paris Montparnasse", 
+        "Paris Saint-Lazare", 
+        "Paris Austerlitz", 
+        "Paris Bercy"
+    ]
+    
+    def standardize_station_name(station_name):
+        return station_name_mapping.get(station_name, station_name)
+    
+    # Charger les gares avec l'option aléatoire
     if 'gares' not in st.session_state:
-        st.session_state.gares = pd.read_csv(StringIO(requests.get(resources_urls[0]['url']).text), sep=';')['Nom'].unique().tolist()
-    if 'lat_depart' not in st.session_state:
-        st.session_state.lat_depart = None
-    if 'lon_depart' not in st.session_state:
-        st.session_state.lon_depart = None
+        gares_csv = pd.read_csv(StringIO(requests.get(resources_urls[0]['url']).text), sep=';')['Nom'].unique().tolist()
+        st.session_state.gares = ["Paris (gare aléatoire)"] + sorted(gares_csv)
+    
+    # Gestion de l'état
+    if 'selected_gare' not in st.session_state:
+        st.session_state.selected_gare = None
+    if 'previous_mode' not in st.session_state:
+        st.session_state.previous_mode = None
 
-    # Sélections utilisateur
+    # Widgets de sélection
     gare_choisie = st.selectbox('Choisissez une gare:', st.session_state.gares)
-    mode_choisi = st.selectbox('Choisissez un mode de transport:', ['TGV', 'TER', 'Intercité', 'RENFE', 'Eurostar'])
+    mode_choisi = st.selectbox('Choisissez un mode de transport:', ['TGV', 'TER', 'Intercité', 'RENFE', 'Trenitalia'])
 
-    if st.button('Générer un trajet'):
-        with st.spinner('Chargement des données...'):
-            trajets_possibles, gare_id_found, lat_depart, lon_depart = gtfs_handler.get_trip_data(gare_choisie, mode_choisi)
+    # Gérer la sélection aléatoire
+    if gare_choisie == "Paris (gare aléatoire)":
+        # Choisir une gare parisienne aléatoire
+        selected = np.random.choice(paris_stations)
+        st.session_state.selected_gare = selected
+        st.info(f"Gare sélectionnée aléatoirement : {selected}")
+    else:
+        st.session_state.selected_gare = gare_choisie
 
-            if not gare_id_found:
-                st.write(f"La gare '{gare_choisie}' n'existe pas dans les données.")
-            elif not trajets_possibles:
-                st.write("Aucun trajet trouvé pour cette gare.")
-            else:
-                trajet_aleatoire = pd.DataFrame(trajets_possibles).sample(n=1).iloc[0]
-                st.session_state.trajet = trajet_aleatoire  # Stocker le trajet dans l'état
-                st.session_state.lat_depart = lat_depart  # Stocker les coordonnées de départ
-                st.session_state.lon_depart = lon_depart  # Stocker les coordonnées de départ
-
+    # Réinitialiser si changement de paramètres
+    if (st.session_state.selected_gare != st.session_state.get('last_gare') or 
+        mode_choisi != st.session_state.get('last_mode')):
+        st.session_state.trajet = None
+        st.session_state.lat_depart = None
+        st.session_state.lon_depart = None
+        st.session_state.last_gare = st.session_state.selected_gare
+    
     if st.session_state.trajet is not None:
         trajet_aleatoire = st.session_state.trajet
         
@@ -271,26 +299,28 @@ def main():
         with col2:
             # Créer la carte avec les lieux culturels
             m = folium.Map(location=[st.session_state.trajet['Latitude'], st.session_state.trajet['Longitude']], zoom_start=12)
-
+        
             # Affichage des marqueurs pour les lieux culturels
             for place in cultural_places:
                 if 'lat' in place and 'lon' in place:
                     tooltip = place.get('tags', {}).get('name', 'Inconnu')
-                    folium.Marker([place['lat'], place['lon']], tooltip=tooltip).add_to(m)
+                    popup = folium.Popup(tooltip, parse_html=True)
+                    folium.Marker([place['lat'], place['lon']], tooltip=tooltip, popup=popup).add_to(m)
                 elif 'center' in place:
                     tooltip = place.get('tags', {}).get('name', 'Inconnu')
-                    folium.Marker([place['center']['lat'], place['center']['lon']], tooltip=tooltip).add_to(m)
-
+                    popup = folium.Popup(tooltip, parse_html=True)
+                    folium.Marker([place['center']['lat'], place['center']['lon']], tooltip=tooltip, popup=popup).add_to(m)
+        
             # Marqueur pour la gare d'arrivée
             folium.Marker(
                 [st.session_state.trajet['Latitude'], st.session_state.trajet['Longitude']],
                 tooltip=st.session_state.trajet['Gare d\'arrivée'],
                 icon=folium.Icon(color='green')
             ).add_to(m)
-
+        
             # Affichage de la carte
             st_folium(m, width=700, height=400)
-
+        
         with col3:
             # Afficher les lieux culturels à proximité de la gare d'arrivée
             st.write("Lieux culturels à proximité de la gare")
@@ -298,21 +328,21 @@ def main():
                 tags = place.get('tags', {})
                 name = tags.get('name', None)
                 if name:  # N'afficher que si le nom est connu
-                    amenity = tags.get('amenity', 'Type inconnu')
+                    amenity = tags.get('amenity', 'tourism') or tags.get('historic', 'Type inconnu')
                     emoji_icon = emoji.emojize(':dot:')
-
-                    if amenity == 'musée':
+        
+                    if amenity == 'museum':
                         emoji_icon = emoji.emojize(':museum:')
-                    elif amenity == 'theatre':
-                        emoji_icon = emoji.emojize(':performing_arts:')
-                    elif amenity == 'art_gallery':
-                        emoji_icon = emoji.emojize(':art:')
-                    elif amenity == 'chateau':
-                        emoji_icon = emoji.emojize(':castle:')
+                    #elif amenity == 'theatre':
+                    #    emoji_icon = emoji.emojize(':performing_arts:')
+                    #elif amenity == 'art_gallery':
+                        #emoji_icon = emoji.emojize(':art:')
+                    #elif amenity == 'castle':
+                     #   emoji_icon = emoji.emojize(':castle:')
                     else:
                         emoji_icon = emoji.emojize(':star:')
-
-                    st.write(f"{emoji_icon} {name} ({amenity})")
+        
+                    st.write(f"{emoji_icon} {name}")
 
         # Afficher le titre au-dessus des boutons
         st.markdown(
